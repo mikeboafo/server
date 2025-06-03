@@ -14,10 +14,10 @@ mongoose
   .catch((err) => console.error("MongoDB connection error:", err));
 
 // Load Mongoose model
-const News = require("../server/models/news");
+const News = require("./models/news");
 
 // Image upload route
-const uploadRoute = require("../server/api/upload");
+const uploadRoute = require("./api/upload");
 app.use("/api/upload", uploadRoute);
 
 // Get all news
