@@ -3,10 +3,18 @@ const News = require('../models/news');
 
 let conn = null;
 
+const slugify = (text) =>
+  text.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '');
+
 const handler = async (req, res) => {
   if (!conn) {
     conn = await mongoose.connect(process.env.MONGO_URI);
   }
+
+  // Optional CORS setup
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === 'GET') {
     const news = await News.find().sort({ createdAt: -1 });
@@ -17,8 +25,8 @@ const handler = async (req, res) => {
     try {
       const {
         title,
-        description,     // formerly "content"
-        image,           // formerly "imageUrl"
+        description,
+        image,
         category,
         categorySlug,
         publishedAt,
@@ -33,7 +41,7 @@ const handler = async (req, res) => {
         description,
         image,
         category,
-        categorySlug,
+        categorySlug: categorySlug || slugify(category),
         publishedAt: publishedAt || new Date().toISOString(),
       });
 
@@ -46,7 +54,7 @@ const handler = async (req, res) => {
     }
   }
 
-  return res.status(405).end(); // Method Not Allowed
+  return res.status(405).json({ message: "Method Not Allowed" });
 };
 
 module.exports = handler;
