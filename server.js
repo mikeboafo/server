@@ -31,6 +31,24 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
+// Get single news story by ID
+app.get("/api/news/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const story = await News.findById(id);
+
+    if (!story) {
+      return res.status(404).json({ message: "Story not found" });
+    }
+
+    res.status(200).json(story);
+  } catch (err) {
+    console.error("Error fetching single story:", err);
+    res.status(500).json({ message: "Failed to fetch story" });
+  }
+});
+
+
 // Create news
 app.post("/api/news", async (req, res) => {
   try {
