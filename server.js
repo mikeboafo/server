@@ -2,6 +2,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
+const he = require("he"); // decode HTML entities
+const striptags = require("striptags"); // remove HTML tags
 
 const app = express();
 app.use(cors());
@@ -20,11 +22,26 @@ const News = require("./models/news");
 const uploadRoute = require("./api/upload");
 app.use("/api/upload", uploadRoute);
 
+// Helper function to clean HTML from news content
+function cleanNewsContent(news) {
+  if (Array.isArray(news)) {
+    return news.map(item => ({
+      ...item._doc,
+      content: item.content ? striptags(he.decode(item.content)) : item.content
+    }));
+  }
+  return {
+    ...news._doc,
+    content: news.content ? striptags(he.decode(news.content)) : news.content
+  };
+}
+
 // Get all news
 app.get("/api/news", async (req, res) => {
   try {
     const news = await News.find().sort({ createdAt: -1 });
-    res.json(news);
+    const cleanedNews = cleanNewsContent(news);
+    res.json(cleanedNews);
   } catch (err) {
     console.error("Error fetching news:", err);
     res.status(500).json({ message: "Failed to fetch news" });
@@ -41,13 +58,13 @@ app.get("/api/news/:id", async (req, res) => {
       return res.status(404).json({ message: "Story not found" });
     }
 
-    res.status(200).json(story);
+    const cleanedStory = cleanNewsContent(story);
+    res.status(200).json(cleanedStory);
   } catch (err) {
     console.error("Error fetching single story:", err);
     res.status(500).json({ message: "Failed to fetch story" });
   }
 });
-
 
 // Create news
 app.post("/api/news", async (req, res) => {
