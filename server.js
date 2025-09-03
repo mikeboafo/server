@@ -27,7 +27,7 @@ const uploadRoute = require("./api/upload");
 app.use("/api/upload", uploadRoute);
 
 // -------------------- AUTH --------------------
-// Register user (hash in route)
+// Register user
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -36,17 +36,14 @@ app.post("/api/auth/register", async (req, res) => {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    // Check for existing by username OR email
     const existingUser = await User.findOne({ $or: [{ email }, { username }] });
     if (existingUser) {
       return res.status(400).json({ message: "Username or email already in use" });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Save new user
     const newUser = new User({
       username,
       email,
@@ -54,13 +51,9 @@ app.post("/api/auth/register", async (req, res) => {
     });
     await newUser.save();
 
-    // (Optional) issue token on register:
-    // const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
-
     return res.status(201).json({
       message: "User registered successfully",
       user: { id: newUser._id, username: newUser.username, email: newUser.email },
-      // token
     });
   } catch (err) {
     console.error("Register error:", err);
@@ -68,7 +61,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// Login user (returns JWT + user)
+// Login user
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -77,15 +70,12 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    // Find user
     const user = await User.findOne({ email });
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-    // Compare passwords
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-    // Create JWT
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
 
     return res.status(200).json({
@@ -99,7 +89,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// Extract Bearer token helper
+// -------------------- Helpers --------------------
 function getBearer(req) {
   const header = req.headers["authorization"] || "";
   const parts = header.split(" ");
@@ -107,7 +97,6 @@ function getBearer(req) {
   return null;
 }
 
-// Auth middleware (use on protected routes)
 function authMiddleware(req, res, next) {
   const token = getBearer(req);
   if (!token) return res.status(401).json({ message: "No token provided" });
@@ -119,19 +108,10 @@ function authMiddleware(req, res, next) {
   });
 }
 
-// -------------------- Helpers (your original cleaning logic) --------------------
 function cleanText(text) {
   if (!text) return text;
-
-  let cleaned = text;
-
-  // Decode HTML entities like &nbsp;
-  cleaned = he.decode(cleaned);
-
-  // Remove HTML tags (but preserve content)
+  let cleaned = he.decode(text);
   cleaned = striptags(cleaned);
-
-  // Fix escaped characters and encoding issues
   cleaned = cleaned
     .replace(/\\,/g, ",")
     .replace(/\\-/g, "-")
@@ -155,7 +135,6 @@ function cleanText(text) {
     .replace(/\\\\/g, "\\")
     .replace(/\s+/g, " ")
     .trim();
-
   return cleaned;
 }
 
@@ -173,7 +152,6 @@ function cleanNewsContent(news) {
       };
     });
   }
-
   const newsObj = news?.toObject ? news.toObject() : news;
   return {
     ...newsObj,
@@ -185,7 +163,7 @@ function cleanNewsContent(news) {
   };
 }
 
-// -------------------- NEWS ROUTES (kept same, cleaned output) --------------------
+// -------------------- NEWS ROUTES --------------------
 
 // Get all news
 app.get("/api/news", async (req, res) => {
@@ -199,16 +177,12 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
-// Get single news story by ID
+// Get single news story
 app.get("/api/news/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const story = await News.findById(id).lean();
-
-    if (!story) {
-      return res.status(404).json({ message: "Story not found" });
-    }
-
+    if (!story) return res.status(404).json({ message: "Story not found" });
     const cleanedStory = cleanNewsContent(story);
     res.status(200).json(cleanedStory);
   } catch (err) {
@@ -218,8 +192,6 @@ app.get("/api/news/:id", async (req, res) => {
 });
 
 // Create news
-// If you want to restrict to logged-in users, add authMiddleware as the second arg:
-// app.post("/api/news", authMiddleware, async (req, res) => {
 app.post("/api/news", async (req, res) => {
   try {
     const news = new News(req.body);
@@ -231,18 +203,26 @@ app.post("/api/news", async (req, res) => {
   }
 });
 
+// Update news by ID
+app.put("/api/news/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await News.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+    if (!updated) return res.status(404).json({ message: "Story not found" });
+    const cleaned = cleanNewsContent(updated);
+    res.status(200).json(cleaned);
+  } catch (err) {
+    console.error("Error updating story:", err);
+    res.status(500).json({ message: "Server error while updating" });
+  }
+});
+
 // Delete news by ID
-// If you want to restrict to logged-in users, add authMiddleware as the second arg:
-// app.delete("/api/news/:id", authMiddleware, async (req, res) => {
 app.delete("/api/news/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await News.findByIdAndDelete(id);
-
-    if (!deleted) {
-      return res.status(404).json({ message: "Story not found" });
-    }
-
+    if (!deleted) return res.status(404).json({ message: "Story not found" });
     res.status(200).json({ message: "Story deleted successfully" });
   } catch (err) {
     console.error("Error deleting story:", err);
