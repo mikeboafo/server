@@ -18,27 +18,43 @@ const handler = async (req, res) => {
 
   if (req.method === 'GET') {
     const news = await News.find().sort({ createdAt: -1 });
-    return res.status(200).json(news);
+
+    // Return with unified "body" field
+    const formatted = news.map(item => ({
+      _id: item._id,
+      title: item.title,
+      body: item.body, // 👈 unified content
+      image: item.image,
+      category: item.category,
+      categorySlug: item.categorySlug,
+      publishedAt: item.publishedAt,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    }));
+
+    return res.status(200).json(formatted);
   }
 
   if (req.method === 'POST') {
     try {
       const {
         title,
-        description,
+        content, // 👈 use new field
+        description, // legacy, optional
         image,
         category,
         categorySlug,
         publishedAt,
       } = req.body;
 
-      if (!title || !description || !image || !category) {
+      if (!title || !(content || description) || !image || !category) {
         return res.status(400).json({ message: "Missing required fields." });
       }
 
       const news = new News({
         title,
-        description,
+        content: content || description, // 👈 always store in `content`
+        description, // keep for backward compatibility
         image,
         category,
         categorySlug: categorySlug || slugify(category),
@@ -46,7 +62,17 @@ const handler = async (req, res) => {
       });
 
       await news.save();
-      return res.status(201).json(news);
+      return res.status(201).json({
+        _id: news._id,
+        title: news.title,
+        body: news.body, // 👈 always return unified field
+        image: news.image,
+        category: news.category,
+        categorySlug: news.categorySlug,
+        publishedAt: news.publishedAt,
+        createdAt: news.createdAt,
+        updatedAt: news.updatedAt,
+      });
 
     } catch (error) {
       console.error("POST /api/news failed:", error);

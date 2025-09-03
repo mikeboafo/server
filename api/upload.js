@@ -24,22 +24,33 @@ router.post("/", upload.single("image"), async (req, res) => {
   try {
     const streamUpload = () => {
       return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream((error, result) => {
-          if (result) {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: "news_images", // optional: organize uploads
+            resource_type: "image", // ensures only images
+          },
+          (error, result) => {
+            if (error) {
+              return reject(error);
+            }
             resolve(result);
-          } else {
-            reject(error);
           }
-        });
+        );
         streamifier.createReadStream(req.file.buffer).pipe(stream);
       });
     };
 
-    const result = await streamUpload(req);
-    return res.status(200).json({ imageUrl: result.secure_url });
+    const result = await streamUpload();
+
+    // Always return a consistent response
+    return res.status(200).json({
+      success: true,
+      imageUrl: result.secure_url,
+      publicId: result.public_id, // keep track if you want to delete later
+    });
   } catch (err) {
     console.error("Upload error:", err);
-    return res.status(500).json({ message: "Upload failed" });
+    return res.status(500).json({ success: false, message: "Upload failed" });
   }
 });
 
