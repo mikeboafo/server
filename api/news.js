@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
-const News = require('../models/news');
+//const News = require('../models/news');
+const News = require('../mod');
 
 let conn = null;
 
