@@ -177,17 +177,76 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
+// Get latest news (array)
+app.get("/api/news/latest", async (req, res) => {
+  try {
+    const latestNews = await News.find()
+      .sort({ publishedAt: -1 })
+      .limit(10)
+      .lean();
+    const cleaned = cleanNewsContent(latestNews);
+    res.json(cleaned); // always return array
+  } catch (err) {
+    console.error("Error fetching latest news:", err);
+    res.status(500).json({ message: "Failed to fetch latest news" });
+  }
+});
+
+// Get trending news (array)
+app.get("/api/news/trending", async (req, res) => {
+  try {
+    const trendingNews = await News.find()
+      .sort({ publishedAt: -1 }) // can later use views/likes
+      .limit(6)
+      .lean();
+    const cleaned = cleanNewsContent(trendingNews);
+    res.json(cleaned); // always return array
+  } catch (err) {
+    console.error("Error fetching trending news:", err);
+    res.status(500).json({ message: "Failed to fetch trending news" });
+  }
+});
+
+// Get news by category slug
+app.get("/api/news/category/:slug", async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const news = await News.find({ categorySlug: slug })
+      .sort({ publishedAt: -1 })
+      .lean();
+    const cleaned = cleanNewsContent(news);
+    res.json(cleaned);
+  } catch (err) {
+    console.error("Error fetching news by category:", err);
+    res.status(500).json({ message: "Failed to fetch news by category" });
+  }
+});
+
+
 // Get single news story
 app.get("/api/news/:id", async (req, res) => {
+  const { id } = req.params;
+
   try {
-    const { id } = req.params;
-    const story = await News.findById(id).lean();
-    if (!story) return res.status(404).json({ message: "Story not found" });
-    const cleanedStory = cleanNewsContent(story);
-    res.status(200).json(cleanedStory);
+    let story;
+
+    if (id === "latest") {
+      story = await News.findOne().sort({ publishedAt: -1 });
+    } else {
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ error: "Invalid story ID" });
+      }
+      story = await News.findById(id);
+    }
+
+    if (!story) {
+      return res.status(404).json({ error: "Story not found" });
+    }
+
+    res.json(story);
   } catch (err) {
-    console.error("Error fetching single story:", err);
-    res.status(500).json({ message: "Failed to fetch story" });
+    console.error("Error fetching story:", err);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 

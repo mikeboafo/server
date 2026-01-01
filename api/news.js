@@ -1,30 +1,28 @@
-const mongoose = require('mongoose');
-//const News = require('../models/news');
 const News = require('../mod');
+const mongoose = require('mongoose');
 
 let conn = null;
-
-const slugify = (text) =>
-  text.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w\-]+/g, '');
 
 const handler = async (req, res) => {
   if (!conn) {
     conn = await mongoose.connect(process.env.MONGO_URI);
   }
 
-  // Optional CORS setup
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === 'GET') {
-    const news = await News.find().sort({ createdAt: -1 });
+    // Get category slug from query
+    const { slug } = req.query;
 
-    // Return with unified "body" field
+    const filter = slug ? { categorySlug: slug } : {};
+    const news = await News.find(filter).sort({ createdAt: -1 });
+
     const formatted = news.map(item => ({
       _id: item._id,
       title: item.title,
-      body: item.body, // 👈 unified content
+      body: item.content, // always use content
       image: item.image,
       category: item.category,
       categorySlug: item.categorySlug,
@@ -38,15 +36,7 @@ const handler = async (req, res) => {
 
   if (req.method === 'POST') {
     try {
-      const {
-        title,
-        content, // 👈 use new field
-        description, // legacy, optional
-        image,
-        category,
-        categorySlug,
-        publishedAt,
-      } = req.body;
+      const { title, content, description, image, category, categorySlug, publishedAt } = req.body;
 
       if (!title || !(content || description) || !image || !category) {
         return res.status(400).json({ message: "Missing required fields." });
@@ -54,19 +44,20 @@ const handler = async (req, res) => {
 
       const news = new News({
         title,
-        content: content || description, // 👈 always store in `content`
-        description, // keep for backward compatibility
+        content: content || description,
+        description,
         image,
         category,
-        categorySlug: categorySlug || slugify(category),
-        publishedAt: publishedAt || new Date().toISOString(),
+        categorySlug: categorySlug || category.toLowerCase().trim().replace(/\s+/g, '-'),
+        publishedAt: publishedAt || new Date(),
       });
 
       await news.save();
+
       return res.status(201).json({
         _id: news._id,
         title: news.title,
-        body: news.body, // 👈 always return unified field
+        body: news.content,
         image: news.image,
         category: news.category,
         categorySlug: news.categorySlug,
@@ -76,7 +67,7 @@ const handler = async (req, res) => {
       });
 
     } catch (error) {
-      console.error("POST /api/news failed:", error);
+      console.error(error);
       return res.status(500).json({ message: "Internal server error" });
     }
   }
