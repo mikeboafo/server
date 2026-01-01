@@ -5,7 +5,7 @@ let conn = null;
 
 const handler = async (req, res) => {
   if (!conn) {
-    conn = await mongoose.connect(process.env.MONGO_URI);
+    conn = await mongoose.connect(process.env.MONGODB_URI);
   }
 
   res.setHeader("Access-Control-Allow-Origin", "*");
