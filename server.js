@@ -35,6 +35,18 @@ app.use(cors({
 ========================================================= */
 app.use(express.json());
 
+// Add cache-control middleware for API routes
+app.use((req, res, next) => {
+  // Only add cache headers for API routes
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+  }
+  next();
+});
+
 /* =========================================================
    ROOT ROUTE
 ========================================================= */
@@ -263,6 +275,64 @@ app.get("/api/available-categories", async (req, res) => {
 });
 
 /* =========================================================
+   TEST ENDPOINT FOR SPECIFIC CATEGORY
+========================================================= */
+app.get("/api/test-category/:slug", async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    
+    // First, check database connection
+    const dbConnected = mongoose.connection.readyState === 1;
+    
+    if (!dbConnected) {
+      return res.json({
+        test: "FAILED",
+        reason: "Database not connected",
+        connectionState: mongoose.connection.readyState
+      });
+    }
+    
+    // Check if ANY data exists
+    const totalNews = await News.countDocuments();
+    
+    // Check for specific slug
+    const exactMatch = await News.countDocuments({ categorySlug: slug });
+    
+    // Get all slugs for debugging
+    const allSlugs = await News.distinct("categorySlug");
+    
+    // Get sample of what exists
+    const sampleDocs = await News.find().limit(3).select('title categorySlug category');
+    
+    res.json({
+      test: "COMPLETE",
+      database: {
+        connected: true,
+        totalDocuments: totalNews
+      },
+      search: {
+        slug: slug,
+        exactMatches: exactMatch,
+        allAvailableSlugs: allSlugs,
+        slugExists: allSlugs.includes(slug)
+      },
+      sampleData: sampleDocs,
+      suggestions: exactMatch === 0 ? [
+        `Slug "${slug}" not found in database.`,
+        `Available slugs: ${allSlugs.join(', ')}`,
+        `Try: ${allSlugs[0] || 'No slugs available'}`
+      ] : [`Found ${exactMatch} documents with slug "${slug}"`]
+    });
+    
+  } catch (error) {
+    res.json({
+      test: "ERROR",
+      error: error.message
+    });
+  }
+});
+
+/* =========================================================
    CATEGORY POPULATION ENDPOINT (TEMPORARY)
 ========================================================= */
 app.post("/api/admin/populate-categories", async (req, res) => {
@@ -448,46 +518,112 @@ app.get("/api/news/trending", async (req, res) => {
   }
 });
 
-// IMPROVED CATEGORY ROUTE WITH BETTER ERROR HANDLING
+// FIXED CATEGORY ROUTE WITH CACHE CONTROL AND BETTER DEBUGGING
 app.get("/api/news/category/:slug", async (req, res) => {
-  console.log(`Category endpoint called: ${req.params.slug}`);
+  const slug = req.params.slug;
+  console.log(`🚀 Category endpoint called: ${slug} at ${new Date().toISOString()}`);
   
   try {
     if (mongoose.connection.readyState === 1) {
-      console.log(`Searching for categorySlug: "${req.params.slug}"`);
+      console.log(`🔍 Searching for categorySlug: "${slug}"`);
       
       // Try exact match first
-      let news = await News.find({ categorySlug: req.params.slug })
+      let news = await News.find({ categorySlug: slug })
         .sort({ publishedAt: -1 })
         .lean();
       
-      console.log(`Found ${news.length} documents with exact match`);
+      console.log(`📊 Found ${news.length} documents with exact match`);
       
-      // If none found, log what's available
+      // If no exact match, try more flexible searches
       if (news.length === 0) {
-        const allSlugs = await News.distinct("categorySlug");
-        console.log(`Available slugs in database: ${JSON.stringify(allSlugs)}`);
+        console.log(`❌ No exact match for "${slug}". Trying flexible searches...`);
         
-        // Try case-insensitive search
-        const caseInsensitiveNews = await News.find({ 
-          categorySlug: { $regex: new RegExp(`^${req.params.slug}$`, 'i') } 
-        }).lean();
+        // 1. Try case-insensitive slug match
+        news = await News.find({ 
+          categorySlug: { $regex: new RegExp(`^${slug}$`, 'i') } 
+        })
+        .sort({ publishedAt: -1 })
+        .lean();
         
-        if (caseInsensitiveNews.length > 0) {
-          console.log(`Found ${caseInsensitiveNews.length} with case-insensitive search`);
-          return res.json(caseInsensitiveNews);
+        if (news.length > 0) {
+          console.log(`✅ Found ${news.length} with case-insensitive slug match`);
+        } else {
+          // 2. Try partial slug match
+          news = await News.find({ 
+            categorySlug: { $regex: new RegExp(slug.replace(/-/g, '.*'), 'i') } 
+          })
+          .sort({ publishedAt: -1 })
+          .lean();
+          
+          if (news.length > 0) {
+            console.log(`✅ Found ${news.length} with partial slug match`);
+          } else {
+            // 3. Try category name match
+            const normalizedCategory = slug
+              .replace(/-/g, ' ')
+              .replace(/\b\w/g, l => l.toUpperCase());
+            
+            news = await News.find({ 
+              category: { $regex: new RegExp(normalizedCategory, 'i') } 
+            })
+            .sort({ publishedAt: -1 })
+            .lean();
+            
+            if (news.length > 0) {
+              console.log(`✅ Found ${news.length} with category name match`);
+            }
+          }
+        }
+        
+        // Log what's available for debugging
+        if (news.length === 0) {
+          const allSlugs = await News.distinct("categorySlug");
+          const allCategories = await News.distinct("category");
+          console.log(`📋 Available slugs: ${JSON.stringify(allSlugs)}`);
+          console.log(`📋 Available categories: ${JSON.stringify(allCategories)}`);
+          
+          // Return helpful error info
+          return res.json({
+            success: false,
+            data: [],
+            message: `No news found for category: ${slug}`,
+            debug: {
+              requestedSlug: slug,
+              availableSlugs: allSlugs,
+              availableCategories: allCategories,
+              suggestion: `Try one of these: ${allSlugs.join(', ') || 'No categories available'}`
+            }
+          });
         }
       }
       
-      return res.json(news);
+      // Return successful response
+      console.log(`🎯 Returning ${news.length} documents for category: ${slug}`);
+      return res.json({
+        success: true,
+        data: news,
+        count: news.length,
+        category: slug
+      });
+      
+    } else {
+      console.log("❌ Database not connected");
+      return res.json({
+        success: false,
+        data: [],
+        message: "Database not connected",
+        dbState: mongoose.connection.readyState
+      });
     }
     
-    console.log("Database not connected, returning empty array");
-    res.json([]);
-    
   } catch (err) {
-    console.error("Category route error:", err);
-    res.json([]);
+    console.error("🔥 Category route error:", err);
+    return res.json({
+      success: false,
+      data: [],
+      message: "Server error",
+      error: err.message
+    });
   }
 });
 
