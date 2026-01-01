@@ -123,6 +123,284 @@ const mockNews = [
 ];
 
 /* =========================================================
+   DEBUG & UTILITY ENDPOINTS
+========================================================= */
+app.get("/api/debug/connection", async (req, res) => {
+  try {
+    const dbInfo = {
+      environment: process.env.NODE_ENV || 'development',
+      mongodbUri: process.env.MONGODB_URI ? 'Set (hidden)' : 'Not set',
+      mongoUriLength: process.env.MONGODB_URI ? process.env.MONGODB_URI.length : 0,
+      connectionState: mongoose.connection.readyState,
+      connectionStateText: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState],
+      databaseName: mongoose.connection.db ? mongoose.connection.db.databaseName : 'Not connected',
+      host: mongoose.connection.host || 'Not connected',
+      port: mongoose.connection.port || 'Not connected'
+    };
+    
+    if (mongoose.connection.readyState === 1) {
+      const collections = await mongoose.connection.db.listCollections().toArray();
+      dbInfo.collections = collections.map(c => c.name);
+      dbInfo.collectionCount = collections.length;
+      
+      const newsCount = await News.countDocuments();
+      dbInfo.newsCount = newsCount;
+      
+      const sampleNews = await News.find().limit(2);
+      dbInfo.sampleNews = sampleNews;
+    }
+    
+    res.json(dbInfo);
+    
+  } catch (error) {
+    res.json({
+      error: error.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
+    });
+  }
+});
+
+app.get("/api/debug/categories-full", async (req, res) => {
+  try {
+    if (mongoose.connection.readyState !== 1) {
+      return res.json({ error: "Database not connected" });
+    }
+    
+    const allDocs = await News.find({}, 'category categorySlug title').limit(20);
+    
+    const categories = {};
+    allDocs.forEach(doc => {
+      if (!categories[doc.category]) {
+        categories[doc.category] = {
+          category: doc.category,
+          slug: doc.categorySlug,
+          count: 0,
+          examples: []
+        };
+      }
+      categories[doc.category].count++;
+      if (categories[doc.category].examples.length < 3) {
+        categories[doc.category].examples.push({
+          title: doc.title,
+          slug: doc.categorySlug
+        });
+      }
+    });
+    
+    const categoryList = Object.values(categories);
+    
+    const regionalNews = await News.find({ 
+      $or: [
+        { categorySlug: 'regional-climate-news' },
+        { categorySlug: /regional.*climate.*news/i },
+        { category: /regional.*climate.*news/i }
+      ]
+    });
+    
+    res.json({
+      totalCategories: categoryList.length,
+      categories: categoryList,
+      regionalClimateNews: {
+        lookingFor: 'regional-climate-news',
+        exactMatch: await News.countDocuments({ categorySlug: 'regional-climate-news' }),
+        caseInsensitive: await News.countDocuments({ 
+          categorySlug: { $regex: /regional.*climate.*news/i } 
+        }),
+        categoryMatch: await News.countDocuments({ 
+          category: { $regex: /regional.*climate.*news/i } 
+        }),
+        foundDocs: regionalNews.map(doc => ({
+          title: doc.title,
+          category: doc.category,
+          categorySlug: doc.categorySlug
+        }))
+      }
+    });
+    
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+app.get("/api/available-categories", async (req, res) => {
+  try {
+    const categoriesWithData = await News.aggregate([
+      { $match: { category: { $exists: true, $ne: "" } } },
+      { 
+        $group: {
+          _id: "$categorySlug",
+          name: { $first: "$category" },
+          count: { $sum: 1 },
+          latest: { $max: "$publishedAt" }
+        }
+      },
+      { 
+        $project: {
+          slug: "$_id",
+          name: { $trim: { input: "$name" } },
+          count: 1,
+          latest: 1,
+          _id: 0
+        }
+      },
+      { $sort: { count: -1, name: 1 } }
+    ]);
+
+    res.json({
+      success: true,
+      categories: categoriesWithData,
+      total: categoriesWithData.length
+    });
+
+  } catch (error) {
+    console.error("Error fetching categories:", error);
+    res.json({
+      success: false,
+      categories: [],
+      error: error.message
+    });
+  }
+});
+
+/* =========================================================
+   CATEGORY POPULATION ENDPOINT (TEMPORARY)
+========================================================= */
+app.post("/api/admin/populate-categories", async (req, res) => {
+  try {
+    const frontendCategories = [
+      {
+        category: "Regional Climate News",
+        categorySlug: "regional-climate-news",
+        sampleTitle: "East Africa Faces Unprecedented Drought Conditions",
+        sampleDescription: "Severe drought affecting millions across East African nations"
+      },
+      {
+        category: "Policy & Governance",
+        categorySlug: "policy-governance",
+        sampleTitle: "New Climate Policy Framework Adopted by ECOWAS",
+        sampleDescription: "West African nations unite on climate action plan"
+      },
+      {
+        category: "Environment & Biodiversity",
+        categorySlug: "environment-biodiversity",
+        sampleTitle: "Congo Basin Forest Protection Initiative Launched",
+        sampleDescription: "New conservation efforts for world's second largest rainforest"
+      },
+      {
+        category: "Agriculture & Food Security",
+        categorySlug: "agriculture-food-security",
+        sampleTitle: "Climate-Resilient Crops Boost Farm Yields in Sahel",
+        sampleDescription: "New drought-resistant varieties helping farmers adapt"
+      },
+      {
+        category: "Energy & Sustainability",
+        categorySlug: "energy-sustainability",
+        sampleTitle: "Solar Power Revolution in Rural Africa",
+        sampleDescription: "Off-grid solutions bringing electricity to remote communities"
+      },
+      {
+        category: "Human Stories & Community Impact",
+        categorySlug: "human-stories-community-impact",
+        sampleTitle: "Women Farmers Leading Climate Adaptation in Kenya",
+        sampleDescription: "Community-based solutions making a difference"
+      },
+      {
+        category: "Science & Research",
+        categorySlug: "science-research",
+        sampleTitle: "New Climate Modeling for African Weather Patterns",
+        sampleDescription: "Research improving regional climate predictions"
+      },
+      {
+        category: "Solutions & Innovation",
+        categorySlug: "solutions-innovation",
+        sampleTitle: "AI-Powered Early Warning Systems Save Lives",
+        sampleDescription: "Technology helping predict and prevent climate disasters"
+      }
+    ];
+
+    const results = [];
+    const addedDocuments = [];
+
+    for (const cat of frontendCategories) {
+      const existingCount = await News.countDocuments({ 
+        categorySlug: cat.categorySlug 
+      });
+
+      if (existingCount === 0) {
+        const sampleDoc = {
+          title: cat.sampleTitle,
+          description: cat.sampleDescription,
+          content: `This is sample content for ${cat.category}. More details about this topic would go here. This demonstrates that the ${cat.category} category is working properly in the Climate Africa news system.`,
+          author: "Climate Africa Team",
+          category: cat.category,
+          categorySlug: cat.categorySlug,
+          image: "https://images.unsplash.com/photo-1466611653911-95081537e5b7",
+          publishedAt: new Date()
+        };
+
+        const newDoc = await News.create(sampleDoc);
+        addedDocuments.push(newDoc);
+        results.push({
+          category: cat.category,
+          slug: cat.categorySlug,
+          status: "ADDED",
+          id: newDoc._id
+        });
+      } else {
+        results.push({
+          category: cat.category,
+          slug: cat.categorySlug,
+          status: "EXISTS",
+          count: existingCount
+        });
+      }
+    }
+
+    const allSlugs = await News.distinct("categorySlug");
+    const allCategories = await News.distinct("category");
+
+    res.json({
+      success: true,
+      message: "Category population complete",
+      results: results,
+      summary: {
+        added: results.filter(r => r.status === "ADDED").length,
+        existing: results.filter(r => r.status === "EXISTS").length,
+        totalCategories: allCategories.length,
+        allSlugs: allSlugs,
+        testUrls: frontendCategories.map(cat => `/api/news/category/${cat.categorySlug}`)
+      },
+      addedDocuments: addedDocuments
+    });
+
+  } catch (error) {
+    console.error("Error populating categories:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+app.post("/api/admin/cleanup-categories", async (req, res) => {
+  try {
+    const result = await News.updateMany(
+      { category: { $regex: /\s+$/ } },
+      [{ $set: { category: { $trim: { input: "$category" } } } }]
+    );
+    
+    res.json({
+      success: true,
+      message: "Cleaned up category names",
+      modified: result.modifiedCount
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/* =========================================================
    NEWS ROUTES
 ========================================================= */
 app.get("/api/news", async (req, res) => {
@@ -170,17 +448,45 @@ app.get("/api/news/trending", async (req, res) => {
   }
 });
 
+// IMPROVED CATEGORY ROUTE WITH BETTER ERROR HANDLING
 app.get("/api/news/category/:slug", async (req, res) => {
+  console.log(`Category endpoint called: ${req.params.slug}`);
+  
   try {
     if (mongoose.connection.readyState === 1) {
-      const news = await News.find({ categorySlug: req.params.slug })
+      console.log(`Searching for categorySlug: "${req.params.slug}"`);
+      
+      // Try exact match first
+      let news = await News.find({ categorySlug: req.params.slug })
         .sort({ publishedAt: -1 })
         .lean();
+      
+      console.log(`Found ${news.length} documents with exact match`);
+      
+      // If none found, log what's available
+      if (news.length === 0) {
+        const allSlugs = await News.distinct("categorySlug");
+        console.log(`Available slugs in database: ${JSON.stringify(allSlugs)}`);
+        
+        // Try case-insensitive search
+        const caseInsensitiveNews = await News.find({ 
+          categorySlug: { $regex: new RegExp(`^${req.params.slug}$`, 'i') } 
+        }).lean();
+        
+        if (caseInsensitiveNews.length > 0) {
+          console.log(`Found ${caseInsensitiveNews.length} with case-insensitive search`);
+          return res.json(caseInsensitiveNews);
+        }
+      }
+      
       return res.json(news);
     }
+    
+    console.log("Database not connected, returning empty array");
     res.json([]);
+    
   } catch (err) {
-    console.error(err);
+    console.error("Category route error:", err);
     res.json([]);
   }
 });
