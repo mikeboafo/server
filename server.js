@@ -9,7 +9,33 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const app = express();
-app.use(cors());
+
+// -------------------- CORS Configuration --------------------
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || "http://localhost:3000https://climate-africa.com/", 
+  credentials: true, 
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "Origin",
+    "Access-Control-Allow-Headers",
+    "Access-Control-Request-Method",
+    "Access-Control-Request-Headers"
+  ],
+  exposedHeaders: ["Content-Range", "X-Content-Range"],
+  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Handle preflight requests for all routes
+app.options("*", cors(corsOptions));
+
+// Parse JSON bodies
 app.use(express.json());
 
 // -------------------- MongoDB Connection --------------------
@@ -250,8 +276,8 @@ app.get("/api/news/:id", async (req, res) => {
   }
 });
 
-// Create news
-app.post("/api/news", async (req, res) => {
+// Create news (protected - requires authentication)
+app.post("/api/news", authMiddleware, async (req, res) => {
   try {
     const news = new News(req.body);
     await news.save();
@@ -262,8 +288,8 @@ app.post("/api/news", async (req, res) => {
   }
 });
 
-// Update news by ID
-app.put("/api/news/:id", async (req, res) => {
+// Update news by ID (protected - requires authentication)
+app.put("/api/news/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const updated = await News.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
@@ -276,8 +302,8 @@ app.put("/api/news/:id", async (req, res) => {
   }
 });
 
-// Delete news by ID
-app.delete("/api/news/:id", async (req, res) => {
+// Delete news by ID (protected - requires authentication)
+app.delete("/api/news/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const deleted = await News.findByIdAndDelete(id);
@@ -289,8 +315,20 @@ app.delete("/api/news/:id", async (req, res) => {
   }
 });
 
+// -------------------- Error Handling Middleware --------------------
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: "Something went wrong!", error: err.message });
+});
+
+// 404 handler for undefined routes
+app.use((req, res) => {
+  res.status(404).json({ message: "Route not found" });
+});
+
 // -------------------- Start server --------------------
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📡 CORS configured for: ${corsOptions.origin}`);
 });
